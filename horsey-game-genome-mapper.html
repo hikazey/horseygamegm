@@ -699,30 +699,61 @@ function buildCrisprTab() {
 
 // ── TAB: GENOME ANALYZER ─────────────────────────────────────────────────────
 
+/**
+ * Parses genome text in the format:
+ *   00:CGATGGTATC   <- helix 0, strand 1
+ *   00:CTATGGCATC   <- helix 0, strand 2
+ *   01:TACAGCAACCTAA
+ *   01:TACAACAAACTCA
+ *   ...
+ *
+ * Each helix number appears exactly twice: first occurrence = strand 1,
+ * second occurrence = strand 2. Also supports the legacy verbose format.
+ */
 function parseGenome(text) {
-  const helices = Array.from({length:20}, ()=>['','']);
-  const lines = text.trim().split('\n').map(l=>l.trim()).filter(Boolean);
-  let cur = -1;
+  // helices[i] = [strand1, strand2]
+  const helices = Array.from({length: 20}, () => ['', '']);
+  const strandCount = new Array(20).fill(0);
+
+  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+
   for (const line of lines) {
-    // new game format: "00:ACCTCAGGTT" (index:number followed by sequence)
-    const nm = line.match(/^(\d{1,2})\s*:\s*([atcg]+)$/i);
-    if (nm) {
-      const idx = parseInt(nm[1], 10);
+    // Primary format: "00:CGATGGTATC" or "0:CGATGGTATC"
+    const m = line.match(/^(\d{1,2})\s*:\s*([ATCGatcg]+)\s*$/);
+    if (m) {
+      const idx = parseInt(m[1], 10);
       if (idx >= 0 && idx < 20) {
-        const seq = nm[2].toUpperCase();
-        // fill first empty strand, then second
-        if (!helices[idx][0]) helices[idx][0] = seq;
-        else if (!helices[idx][1]) helices[idx][1] = seq;
-        else helices[idx][1] = seq; // overwrite second if both exist
+        const seq = m[2].toUpperCase();
+        if (strandCount[idx] === 0) {
+          helices[idx][0] = seq;
+          strandCount[idx] = 1;
+        } else {
+          helices[idx][1] = seq;
+          strandCount[idx] = 2;
+        }
       }
       continue;
     }
 
-    const hm = line.match(/helix\s*(\d+)[^:)]*[:\)]\s*([atcg]+)/i);
-    const sm = line.match(/(?:second\s*strand|strand\s*2)[^:]*:\s*([atcg]+)/i);
-    if (hm) { cur = parseInt(hm[1]); if (cur < 20) helices[cur][0] = hm[2].toUpperCase(); }
-    else if (sm && cur >= 0 && cur < 20) helices[cur][1] = sm[1].toUpperCase();
-    else if (cur >= 0 && cur < 20 && !helices[cur][1] && /^[atcg]+$/i.test(line)) helices[cur][1] = line.toUpperCase();
+    // Legacy verbose format: "Helix 0): ACGT" or "Helix 0: ACGT"
+    const hm = line.match(/helix\s*(\d+)[^:)]*[:\)]\s*([ATCGatcg]+)/i);
+    if (hm) {
+      const idx = parseInt(hm[1], 10);
+      if (idx >= 0 && idx < 20) {
+        helices[idx][0] = hm[2].toUpperCase();
+        strandCount[idx] = Math.max(strandCount[idx], 1);
+      }
+      continue;
+    }
+    const sm = line.match(/(?:second\s*strand|strand\s*2)[^:]*:\s*([ATCGatcg]+)/i);
+    if (sm) {
+      for (let i = 19; i >= 0; i--) {
+        if (helices[i][0]) {
+          helices[i][1] = sm[1].toUpperCase();
+          break;
+        }
+      }
+    }
   }
   return helices;
 }
@@ -733,8 +764,8 @@ function buildAnalyzerTab() {
 
   const card = el('div', {class:'card'});
   const field = el('div', {class:'field'});
-  field.innerHTML = '<label>Paste genome (20 helices, both strands)</label>';
-  const ta = el('textarea', {rows:'8', placeholder:'Helix 0.) atcgatcg\nSecond Strand: gctagcta\n\n(or numbered format e.g. 00:ACCTCAGGTT on each line, two lines per helix)'});
+  field.innerHTML = '<label>Paste genome — two lines per helix: <span style="color:#7dd3fc">00:SEQUENCE</span> (strand 1) then <span style="color:#7dd3fc">00:SEQUENCE</span> (strand 2)</label>';
+  const ta = el('textarea', {rows:'10', placeholder:'00:CGATGGTATC\n00:CTATGGCATC\n01:TACAGCAACCTAA\n01:TACAACAAACTCA\n...'});
   field.appendChild(ta);
   card.appendChild(field);
 
@@ -755,7 +786,7 @@ function buildAnalyzerTab() {
       const s1 = genome[h][0], s2 = genome[h][1];
       const has = s1 || s2;
       const block = el('div', {class:'result-helix'});
-      const hdr = el('div', {style:'display:flex;gap:10px;align-items:center;margin-bottom:'+(has?'8px':'0')});
+      const hdr = el('div', {style:'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:'+(has?'8px':'0')});
       hdr.innerHTML = `<span style="color:var(--accent);font-weight:bold;font-size:13px;min-width:65px">HELIX ${h}</span>`;
       if (s1) {
         const r = el('div', {class:'strand-row'});
